@@ -11,6 +11,7 @@ import (
 )
 
 var Client *mongo.Client
+var ArtworkCollection *mongo.Collection
 
 func ConnectMongo() {
 	mongoURI := os.Getenv("MONGO_URI")
