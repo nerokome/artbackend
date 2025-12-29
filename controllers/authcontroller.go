@@ -15,9 +15,13 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// helper function to respond with JSON error
+func respondError(c *gin.Context, status int, message string) {
+	c.JSON(status, gin.H{"error": message})
+	c.Abort()
+}
 
 // SIGNUP
-
 func Signup(c *gin.Context) {
 	userCollection := database.Collection("users")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -30,25 +34,23 @@ func Signup(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input: " + err.Error()})
+		respondError(c, http.StatusBadRequest, "Invalid input: "+err.Error())
 		return
 	}
 
-	// check if email exists
 	count, err := userCollection.CountDocuments(ctx, bson.M{"email": input.Email})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		respondError(c, http.StatusInternalServerError, "Database error: "+err.Error())
 		return
 	}
 	if count > 0 {
-		c.JSON(http.StatusConflict, gin.H{"error": "Email already exists"})
+		respondError(c, http.StatusConflict, "Email already exists")
 		return
 	}
 
-	// hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not hash password"})
+		respondError(c, http.StatusInternalServerError, "Could not hash password")
 		return
 	}
 
@@ -63,16 +65,14 @@ func Signup(c *gin.Context) {
 	}
 
 	if _, err := userCollection.InsertOne(ctx, user); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create user"})
+		respondError(c, http.StatusInternalServerError, "Could not create user: "+err.Error())
 		return
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"message": "Signup successful"})
 }
 
-
 // LOGIN
-
 func Login(c *gin.Context) {
 	userCollection := database.Collection("users")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -84,40 +84,39 @@ func Login(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input: " + err.Error()})
+		respondError(c, http.StatusBadRequest, "Invalid input: "+err.Error())
 		return
 	}
 
 	var user models.User
 	if err := userCollection.FindOne(ctx, bson.M{"email": input.Email}).Decode(&user); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+		respondError(c, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 
-	// compare password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+		respondError(c, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "JWT secret not configured"})
+		respondError(c, http.StatusInternalServerError, "JWT secret not configured")
 		return
 	}
 
 	claims := jwt.MapClaims{
-		"userId": user.ID.Hex(),
-		"email":  user.Email,
-		"role":   user.Role,
-		"exp":    time.Now().Add(24 * time.Hour).Unix(),
-		"iat":    time.Now().Unix(),
+		"user_id": user.ID.Hex(),
+		"email":   user.Email,
+		"role":    user.Role,
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+		"iat":     time.Now().Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signedToken, err := token.SignedString([]byte(secret))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not generate token"})
+		respondError(c, http.StatusInternalServerError, "Could not generate token: "+err.Error())
 		return
 	}
 

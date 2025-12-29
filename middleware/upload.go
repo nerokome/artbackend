@@ -16,11 +16,18 @@ func UploadMiddleware(maxFileSizeMB int64, allowedTypes []string) gin.HandlerFun
 			return
 		}
 
+		if file.Size == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "file is empty"})
+			c.Abort()
+			return
+		}
+
 		if file.Size > maxFileSizeMB*1024*1024 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "file too large"})
 			c.Abort()
 			return
 		}
+
 		contentType := file.Header.Get("Content-Type")
 		validType := false
 		for _, t := range allowedTypes {
@@ -31,7 +38,11 @@ func UploadMiddleware(maxFileSizeMB int64, allowedTypes []string) gin.HandlerFun
 		}
 
 		if !validType {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file type"})
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":        "invalid file type",
+				"fileType":     contentType,
+				"allowedTypes": allowedTypes,
+			})
 			c.Abort()
 			return
 		}

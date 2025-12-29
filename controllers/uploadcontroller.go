@@ -2,8 +2,8 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
@@ -11,11 +11,11 @@ import (
 	"github.com/nerokome/artfolio-backend/config"
 	"github.com/nerokome/artfolio-backend/database"
 	"github.com/nerokome/artfolio-backend/models"
-	"github.com/nerokome/artfolio-backend/utils"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 func UploadArtwork(c *gin.Context) {
+
 	title := c.PostForm("title")
 	if title == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
@@ -30,75 +30,75 @@ func UploadArtwork(c *gin.Context) {
 
 	src, err := file.Open()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "file open failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "file open failed: " + err.Error()})
 		return
 	}
 	defer src.Close()
 
-	// Watermark
-	watermark := c.PostForm("watermark") == "true"
-	watermarkText := c.PostForm("watermark_text")
+	params := uploader.UploadParams{Folder: "artfolio"}
 
-	var transform []string
-	if watermark && watermarkText != "" {
-		escaped := strings.ReplaceAll(watermarkText, " ", "%20")
-		transform = append(transform,
-			"l_text:arial_40:"+escaped+",g_south_east,x_20,y_20,opacity_40,co_white",
-		)
-	}
-
-	params := uploader.UploadParams{
-		Folder: "artfolio",
-	}
-
-	if len(transform) > 0 {
-		params.Transformation = strings.Join(transform, "/")
-	}
-
-	// Use Cloudinary client correctly
-	result, err := config.Cloudinary.Upload.Upload(
-		context.Background(),
-		src,
-		params,
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "upload failed"})
+	if config.Cloudinary == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "cloudinary not initialized"})
 		return
 	}
 
-	userID := c.MustGet("userId").(primitive.ObjectID)
-	slug := utils.GenerateSlug(title)
-	seo := utils.GenerateSEO(title, result.SecureURL)
+	result, err := config.Cloudinary.Upload.Upload(context.Background(), src, params)
+	if err != nil {
+		fmt.Println("Cloudinary upload error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "upload failed: " + err.Error()})
+		return
+	}
+
+	if result.SecureURL == "" || result.PublicID == "" {
+		fmt.Println("Cloudinary returned empty result:", result)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "upload failed: empty URL or public ID"})
+		return
+	}
+
+	userIDStr, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user_id missing in context"})
+		return
+	}
+
+	userIDHex, ok := userIDStr.(string)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id format"})
+		return
+	}
+
+	userID, err := primitive.ObjectIDFromHex(userIDHex)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
+		return
+	}
+
+	slug := title
 
 	artwork := models.Artwork{
-		ID:       primitive.NewObjectID(),
-		UserID:   userID,
-		Title:    title,
-		Slug:     slug,
-		URL:      result.SecureURL,
-		PublicID: result.PublicID,
-		Views:    0,
-		IsPublic: true,
-		SEO: models.SEOMetadata{
-			Title:       seo["title"].(string),
-			Description: seo["description"].(string),
-			Image:       seo["image"].(string),
-			Keywords:    seo["keywords"].([]string),
-		},
+		ID:        primitive.NewObjectID(),
+		UserID:    userID,
+		Title:     title,
+		Slug:      slug,
+		URL:       result.SecureURL,
+		PublicID:  result.PublicID,
+		Views:     0,
+		IsPublic:  true,
 		CreatedAt: time.Now(),
 	}
 
-	// Dynamic MongoDB collection helper
+	// 8. Insert into MongoDB
 	collection := database.Collection("artworks")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err = collection.InsertOne(ctx, artwork)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "db save failed"})
+	if _, err := collection.InsertOne(ctx, artwork); err != nil {
+		fmt.Println("MongoDB insert error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db save failed: " + err.Error()})
 		return
 	}
 
+	// 9. Respond success
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "upload successful",
 		"artwork": artwork,

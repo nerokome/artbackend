@@ -15,13 +15,5 @@ type Artwork struct {
 	PublicID  string             `bson:"publicId" json:"publicId"`
 	Views     int                `bson:"views" json:"views"`
 	IsPublic  bool               `bson:"isPublic" json:"isPublic"`
-	SEO       SEOMetadata        `bson:"seo" json:"seo"`
 	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
-}
-
-type SEOMetadata struct {
-	Title       string   `bson:"title" json:"title"`
-	Description string   `bson:"description" json:"description"`
-	Image       string   `bson:"image" json:"image"`
-	Keywords    []string `bson:"keywords" json:"keywords"`
 }
