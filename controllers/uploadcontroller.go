@@ -11,11 +11,13 @@ import (
 	"github.com/nerokome/artfolio-backend/config"
 	"github.com/nerokome/artfolio-backend/database"
 	"github.com/nerokome/artfolio-backend/models"
+
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func UploadArtwork(c *gin.Context) {
-
 	title := c.PostForm("title")
 	if title == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
@@ -30,56 +32,48 @@ func UploadArtwork(c *gin.Context) {
 
 	src, err := file.Open()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "file open failed: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "file open failed"})
 		return
 	}
 	defer src.Close()
-
-	params := uploader.UploadParams{Folder: "artfolio"}
 
 	if config.Cloudinary == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "cloudinary not initialized"})
 		return
 	}
 
-	result, err := config.Cloudinary.Upload.Upload(context.Background(), src, params)
-	if err != nil {
-		fmt.Println("Cloudinary upload error:", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "upload failed: " + err.Error()})
-		return
+	params := uploader.UploadParams{
+		Folder: "artfolio",
 	}
 
-	if result.SecureURL == "" || result.PublicID == "" {
-		fmt.Println("Cloudinary returned empty result:", result)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "upload failed: empty URL or public ID"})
+	result, err := config.Cloudinary.Upload.Upload(
+		context.Background(),
+		src,
+		params,
+	)
+	if err != nil {
+		fmt.Println("Cloudinary upload error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "upload failed"})
 		return
 	}
 
 	userIDStr, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "user_id missing in context"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
 		return
 	}
 
-	userIDHex, ok := userIDStr.(string)
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id format"})
-		return
-	}
-
-	userID, err := primitive.ObjectIDFromHex(userIDHex)
+	userID, err := primitive.ObjectIDFromHex(userIDStr.(string))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user_id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
 		return
 	}
-
-	slug := title
 
 	artwork := models.Artwork{
 		ID:        primitive.NewObjectID(),
 		UserID:    userID,
 		Title:     title,
-		Slug:      slug,
+		Slug:      title,
 		URL:       result.SecureURL,
 		PublicID:  result.PublicID,
 		Views:     0,
@@ -87,20 +81,82 @@ func UploadArtwork(c *gin.Context) {
 		CreatedAt: time.Now(),
 	}
 
-	// 8. Insert into MongoDB
 	collection := database.Collection("artworks")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if _, err := collection.InsertOne(ctx, artwork); err != nil {
-		fmt.Println("MongoDB insert error:", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "db save failed: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db save failed"})
 		return
 	}
 
-	// 9. Respond success
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "upload successful",
 		"artwork": artwork,
 	})
+}
+
+func GetPublicArtworks(c *gin.Context) {
+	collection := database.Collection("artworks")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	opts := options.Find().SetSort(bson.M{"createdAt": -1})
+
+	cursor, err := collection.Find(
+		ctx,
+		bson.M{"isPublic": true},
+		opts,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch artworks"})
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var artworks []models.Artwork
+	if err := cursor.All(ctx, &artworks); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse artworks"})
+		return
+	}
+
+	c.JSON(http.StatusOK, artworks)
+}
+
+func GetArtworkAndCountView(c *gin.Context) {
+	id := c.Param("id")
+
+	artworkID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid artwork id"})
+		return
+	}
+
+	collection := database.Collection("artworks")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var artwork models.Artwork
+	err = collection.FindOne(
+		ctx,
+		bson.M{
+			"_id":      artworkID,
+			"isPublic": true,
+		},
+	).Decode(&artwork)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "artwork not found"})
+		return
+	}
+
+	// Increment view count (public viewers)
+	go collection.UpdateOne(
+		context.Background(),
+		bson.M{"_id": artworkID},
+		bson.M{"$inc": bson.M{"views": 1}},
+	)
+
+	c.JSON(http.StatusOK, artwork)
 }
