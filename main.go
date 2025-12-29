@@ -12,16 +12,14 @@ import (
 )
 
 func main() {
-	
+
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system environment variables")
 	}
 
 	config.InitCloudinary()
-
 	database.ConnectMongo()
 
-	
 	r := gin.Default()
 
 	
@@ -29,9 +27,9 @@ func main() {
 		c.JSON(200, gin.H{"message": "pong"})
 	})
 
-	
-	routes.AuthRoutes(r)       
-	routes.ArtworkRoutes(r)    
+	routes.AuthRoutes(r)
+	routes.ArtworkRoutes(r)
+	routes.AnalyticsRoutes(r)
 
 	if err := r.Run(":5005"); err != nil {
 		log.Fatal("Server failed to start:", err)
