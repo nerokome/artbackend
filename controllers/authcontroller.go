@@ -130,3 +130,10 @@ func Login(c *gin.Context) {
 		},
 	})
 }
+// LOGOUT
+func Logout(c *gin.Context) {
+	
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Logged out successfully",
+	})
+}
