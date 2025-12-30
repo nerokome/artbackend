@@ -27,5 +27,12 @@ func ArtworkRoutes(router *gin.Engine) {
 			"/:id",
 			controllers.GetArtworkAndCountView,
 		)
+		artworks.GET(
+			"/mine",
+			middleware.Authenticate(),
+			controllers.GetMyArtworks,
+		)
+
 	}
+
 }

@@ -160,3 +160,66 @@ func GetArtworkAndCountView(c *gin.Context) {
 
 	c.JSON(http.StatusOK, artwork)
 }
+func GetMyArtworks(c *gin.Context) {
+	userIDValue, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "unauthorized",
+		})
+		return
+	}
+
+	userIDHex, ok := userIDValue.(string)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid user id format",
+		})
+		return
+	}
+
+	userID, err := primitive.ObjectIDFromHex(userIDHex)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "invalid user id",
+		})
+		return
+	}
+
+	
+	collection := database.Collection("artworks")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	
+	opts := options.Find().
+		SetSort(bson.M{"createdAt": -1})
+
+	cursor, err := collection.Find(
+		ctx,
+		bson.M{
+			"userId": userID,
+		},
+		opts,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to fetch artworks",
+		})
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var artworks []models.Artwork
+	if err := cursor.All(ctx, &artworks); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to parse artworks",
+		})
+		return
+	}
+
+	
+	c.JSON(http.StatusOK, gin.H{
+		"count":    len(artworks),
+		"artworks": artworks,
+	})
+}
