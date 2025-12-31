@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
@@ -185,12 +186,10 @@ func GetMyArtworks(c *gin.Context) {
 		return
 	}
 
-	
 	collection := database.Collection("artworks")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	
 	opts := options.Find().
 		SetSort(bson.M{"createdAt": -1})
 
@@ -217,8 +216,72 @@ func GetMyArtworks(c *gin.Context) {
 		return
 	}
 
-	
 	c.JSON(http.StatusOK, gin.H{
+		"count":    len(artworks),
+		"artworks": artworks,
+	})
+}
+func GetPublicPortfolioByName(c *gin.Context) {
+	nameSlug := c.Param("name")
+
+	normalizedName := strings.ReplaceAll(nameSlug, "-", " ")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 1. Find user by full name (case-insensitive)
+	userCollection := database.Collection("users")
+	var user models.User
+
+	err := userCollection.FindOne(
+		ctx,
+		bson.M{
+			"full_name": bson.M{
+				"$regex":   "^" + normalizedName + "$",
+				"$options": "i",
+			},
+		},
+	).Decode(&user)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "artist not found",
+		})
+		return
+	}
+
+	// 2. Fetch ONLY public artworks
+	artworkCollection := database.Collection("artworks")
+
+	cursor, err := artworkCollection.Find(
+		ctx,
+		bson.M{
+			"userId":   user.ID,
+			"isPublic": true,
+		},
+		options.Find().SetSort(bson.M{"createdAt": -1}),
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to fetch artworks",
+		})
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var artworks []models.Artwork
+	if err := cursor.All(ctx, &artworks); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to parse artworks",
+		})
+		return
+	}
+
+	// 3. Public-safe response
+	c.JSON(http.StatusOK, gin.H{
+		"profile": gin.H{
+			"name": user.FullName,
+		},
 		"count":    len(artworks),
 		"artworks": artworks,
 	})

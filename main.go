@@ -51,6 +51,7 @@ func main() {
 	routes.AuthRoutes(r)
 	routes.ArtworkRoutes(r)
 	routes.AnalyticsRoutes(r)
+	routes.PublicPortfolioRoutes(r)
 
 	if err := r.Run(":5005"); err != nil {
 		log.Fatal("Server failed to start:", err)

@@ -36,3 +36,14 @@ func ArtworkRoutes(router *gin.Engine) {
 	}
 
 }
+func PublicPortfolioRoutes(router *gin.Engine) {
+
+	portfolio := router.Group("/portfolio")
+	{
+
+		portfolio.GET(
+			"/:name",
+			controllers.GetPublicPortfolioByName,
+		)
+	}
+}
