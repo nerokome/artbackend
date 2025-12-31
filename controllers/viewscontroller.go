@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/nerokome/artfolio-backend/database"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 func GetAnalyticsOverview(c *gin.Context) {
@@ -23,14 +24,12 @@ func GetAnalyticsOverview(c *gin.Context) {
 		return
 	}
 
-	
 	totalViews, err := viewCollection.CountDocuments(ctx, bson.M{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to count views"})
 		return
 	}
 
-	
 	cursor, err := viewCollection.Aggregate(ctx, bson.A{
 		bson.M{
 			"$group": bson.M{
@@ -69,7 +68,7 @@ func GetViewsOverTime(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	start := time.Now().AddDate(0, 0, -6) 
+	start := time.Now().AddDate(0, 0, -6)
 
 	cursor, err := viewCollection.Aggregate(ctx, bson.A{
 		bson.M{
@@ -164,19 +163,27 @@ func LogView(c *gin.Context) {
 		return
 	}
 
+	// Convert string to ObjectID
+	objID, err := primitive.ObjectIDFromHex(artworkID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid artworkId"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	count, err := artworkCollection.CountDocuments(ctx, bson.M{"_id": artworkID})
+	// Check if artwork exists
+	count, err := artworkCollection.CountDocuments(ctx, bson.M{"_id": objID})
 	if err != nil || count == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "artwork not found"})
 		return
 	}
 
-	
+	// Log the view
 	view := bson.M{
-		"artworkId": artworkID,
-		"userId":    nil, 
+		"artworkId": objID,
+		"userId":    nil,
 		"createdAt": time.Now(),
 	}
 
