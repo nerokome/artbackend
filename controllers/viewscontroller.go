@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/nerokome/artfolio-backend/database"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 func GetAnalyticsOverview(c *gin.Context) {
@@ -163,26 +162,17 @@ func LogView(c *gin.Context) {
 		return
 	}
 
-	// Convert string to ObjectID
-	objID, err := primitive.ObjectIDFromHex(artworkID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid artworkId"})
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Check if artwork exists
-	count, err := artworkCollection.CountDocuments(ctx, bson.M{"_id": objID})
+	count, err := artworkCollection.CountDocuments(ctx, bson.M{"_id": artworkID})
 	if err != nil || count == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "artwork not found"})
 		return
 	}
 
-	// Log the view
 	view := bson.M{
-		"artworkId": objID,
+		"artworkId": artworkID,
 		"userId":    nil,
 		"createdAt": time.Now(),
 	}
