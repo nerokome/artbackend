@@ -286,3 +286,71 @@ func GetPublicPortfolioByName(c *gin.Context) {
 		"artworks": artworks,
 	})
 }
+func DeleteArtwork(c *gin.Context) {
+	// 1. Get artwork ID from URL param
+	artworkIDStr := c.Param("id")
+	if artworkIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "artwork ID is required"})
+		return
+	}
+
+	artworkID, err := primitive.ObjectIDFromHex(artworkIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid artwork ID"})
+		return
+	}
+
+	// 2. Get user ID from context
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	userIDHex, ok := userIDVal.(string)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID format"})
+		return
+	}
+
+	userID, err := primitive.ObjectIDFromHex(userIDHex)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	// 3. Find the artwork to verify ownership
+	collection := database.Collection("artworks")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var artwork models.Artwork
+	err = collection.FindOne(ctx, bson.M{"_id": artworkID, "userId": userID}).Decode(&artwork)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "artwork not found or you do not own it"})
+		return
+	}
+
+	// 4. Delete from Cloudinary
+	if config.Cloudinary != nil && artwork.PublicID != "" {
+		_, err = config.Cloudinary.Upload.Destroy(context.Background(), uploader.DestroyParams{
+			PublicID: artwork.PublicID,
+		})
+		if err != nil {
+			fmt.Println("Cloudinary deletion error:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete artwork from cloud storage"})
+			return
+		}
+	}
+
+	// 5. Delete from MongoDB
+	_, err = collection.DeleteOne(ctx, bson.M{"_id": artworkID, "userId": userID})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete artwork from database"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "artwork deleted successfully",
+	})
+}

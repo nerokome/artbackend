@@ -34,6 +34,7 @@ func ArtworkRoutes(router *gin.Engine) {
 		)
 
 	}
+	artworks.DELETE("/:id", middleware.Authenticate(), controllers.DeleteArtwork)
 
 }
 func PublicPortfolioRoutes(router *gin.Engine) {
