@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -17,47 +18,48 @@ func LogView(c *gin.Context) {
 	viewCollection := database.Collection("view_events")
 	artworkCollection := database.Collection("artworks")
 
-	artworkIDStr := c.Param("artworkId")
-
-	// 1. Explicit check for common frontend failure strings
-	if artworkIDStr == "" || artworkIDStr == "undefined" || artworkIDStr == "null" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Valid artworkId is required"})
+	artworkID := c.Param("artworkId")
+	if artworkID == "" || artworkID == "undefined" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "artworkId required"})
 		return
 	}
 
-	// 2. Convert string to ObjectID
-	objID, err := primitive.ObjectIDFromHex(artworkIDStr)
+	objID, err := primitive.ObjectIDFromHex(artworkID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid artworkId"})
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 3. Verify artwork exists before logging
-	count, err := artworkCollection.CountDocuments(ctx, bson.M{"_id": objID})
-	if err != nil || count == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Artwork not found"})
-		return
-	}
-
-	// 4. Create the view event
+	// 1. Log the individual view event (for detailed analytics)
 	view := bson.M{
 		"artworkId": objID,
-		"userId":    nil, // Expand this later if you add Auth
+		"userId":    nil,
 		"createdAt": time.Now(),
 	}
-
 	_, err = viewCollection.InsertOne(ctx, view)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to log view"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to log view event"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "View logged successfully"})
-}
+	// 2. NEW: Increment the "views" field on the Artwork document itself
+	// This makes the "views" field in your Postman response increase!
+	_, err = artworkCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": objID},
+		bson.M{"$inc": bson.M{"views": 1}}, // Increment by 1
+	)
+	if err != nil {
+		// We don't necessarily want to fail the whole request if just the counter fails,
+		// but it's good to log it.
+		fmt.Println("Failed to increment view counter:", err)
+	}
 
+	c.JSON(http.StatusOK, gin.H{"message": "view logged and counter incremented"})
+}
 func GetAnalyticsOverview(c *gin.Context) {
 	artworkCollection := database.Collection("artworks")
 	viewCollection := database.Collection("view_events")
