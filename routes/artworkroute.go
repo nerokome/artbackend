@@ -57,6 +57,6 @@ func PublicPortfolioRoutes(router *gin.Engine) {
 	portfolio.GET(
 		"/:name",
 		middleware.RateLimiter(1, 5),
-		controllers.GetPublicPortfolioByName,
+		controllers.GetPublicPortfolioBySlug,
 	)
 }

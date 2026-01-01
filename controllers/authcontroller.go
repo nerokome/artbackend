@@ -11,10 +11,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/nerokome/artfolio-backend/database"
 	"github.com/nerokome/artfolio-backend/models"
+	"github.com/nerokome/artfolio-backend/utils"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -38,22 +38,10 @@ func generateJWT(user models.User, duration time.Duration) (string, error) {
 	return token.SignedString([]byte(secret))
 }
 
-// -----------------------------
-// SIGNUP
-// -----------------------------
 func Signup(c *gin.Context) {
 	userCollection := database.Collection("users")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	// Optional: run once in migration instead of every signup
-	_, err := userCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.M{"email": 1},
-		Options: options.Index().SetUnique(true),
-	})
-	if err != nil {
-		log.Println("Unique index creation skipped:", err)
-	}
 
 	var input struct {
 		FullName string `json:"fullName" binding:"required"`
@@ -66,12 +54,19 @@ func Signup(c *gin.Context) {
 		return
 	}
 
-	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	if err != nil {
-		log.Println("Password hashing failed:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
+	}
+
+	// Generate a URL-safe slug for the user
+	slug := utils.Slugify(input.FullName)
+
+	// Ensure slug uniqueness
+	count, _ := userCollection.CountDocuments(ctx, bson.M{"slug": slug})
+	if count > 0 {
+		slug = slug + "-" + primitive.NewObjectID().Hex()[:6]
 	}
 
 	user := models.User{
@@ -80,6 +75,7 @@ func Signup(c *gin.Context) {
 		Email:     input.Email,
 		Password:  string(hashedPassword),
 		Role:      "user",
+		Slug:      slug,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -89,7 +85,6 @@ func Signup(c *gin.Context) {
 		if mongo.IsDuplicateKeyError(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "Email already exists"})
 		} else {
-			log.Println("Failed to insert user:", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		}
 		return
@@ -97,7 +92,6 @@ func Signup(c *gin.Context) {
 
 	token, err := generateJWT(user, 7*24*time.Hour)
 	if err != nil {
-		log.Println("JWT generation failed:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
@@ -110,6 +104,7 @@ func Signup(c *gin.Context) {
 			"name":  user.FullName,
 			"email": user.Email,
 			"role":  user.Role,
+			"slug":  user.Slug,
 		},
 	})
 }
