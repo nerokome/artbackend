@@ -231,7 +231,6 @@ func GetPublicPortfolioBySlug(c *gin.Context) {
 
 	userCollection := database.Collection("users")
 	var user models.User
-
 	if err := userCollection.FindOne(ctx, bson.M{"slug": slug}).Decode(&user); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "artist not found"})
 		return
@@ -256,7 +255,10 @@ func GetPublicPortfolioBySlug(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"profile":  gin.H{"name": user.FullName, "slug": user.Slug},
+		"profile": gin.H{
+			"name": user.FullName,
+			"slug": user.Slug,
+		},
 		"count":    len(artworks),
 		"artworks": artworks,
 	})
