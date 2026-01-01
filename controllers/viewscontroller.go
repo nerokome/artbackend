@@ -13,7 +13,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// LogView logs a new view event for a specific artwork
 func LogView(c *gin.Context) {
 	viewCollection := database.Collection("view_events")
 	artworkCollection := database.Collection("artworks")
@@ -33,7 +32,6 @@ func LogView(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 1. Log the individual view event (for detailed analytics)
 	view := bson.M{
 		"artworkId": objID,
 		"userId":    nil,
@@ -45,16 +43,13 @@ func LogView(c *gin.Context) {
 		return
 	}
 
-	// 2. NEW: Increment the "views" field on the Artwork document itself
-	// This makes the "views" field in your Postman response increase!
 	_, err = artworkCollection.UpdateOne(
 		ctx,
 		bson.M{"_id": objID},
-		bson.M{"$inc": bson.M{"views": 1}}, // Increment by 1
+		bson.M{"$inc": bson.M{"views": 1}},
 	)
 	if err != nil {
-		// We don't necessarily want to fail the whole request if just the counter fails,
-		// but it's good to log it.
+
 		fmt.Println("Failed to increment view counter:", err)
 	}
 
@@ -70,7 +65,6 @@ func GetAnalyticsOverview(c *gin.Context) {
 	totalArtworks, _ := artworkCollection.CountDocuments(ctx, bson.M{})
 	totalViews, _ := viewCollection.CountDocuments(ctx, bson.M{})
 
-	// Aggregate viewer split (Authenticated vs Public)
 	cursor, err := viewCollection.Aggregate(ctx, bson.A{
 		bson.M{
 			"$group": bson.M{
@@ -103,7 +97,6 @@ func GetViewsOverTime(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Last 7 days
 	start := time.Now().AddDate(0, 0, -6)
 
 	cursor, err := viewCollection.Aggregate(ctx, bson.A{
@@ -132,7 +125,6 @@ func GetMostViewedArtworks(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Find public artworks and sort by the 'views' field
 	opts := options.Find().SetSort(bson.M{"views": -1})
 	cursor, err := collection.Find(ctx, bson.M{"isPublic": true}, opts)
 

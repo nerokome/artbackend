@@ -152,7 +152,6 @@ func GetArtworkAndCountView(c *gin.Context) {
 		return
 	}
 
-	// Increment view count (public viewers)
 	go collection.UpdateOne(
 		context.Background(),
 		bson.M{"_id": artworkID},
@@ -229,7 +228,7 @@ func GetPublicPortfolioByName(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 1. Find user by full name (case-insensitive)
+	
 	userCollection := database.Collection("users")
 	var user models.User
 
@@ -250,7 +249,7 @@ func GetPublicPortfolioByName(c *gin.Context) {
 		return
 	}
 
-	// 2. Fetch ONLY public artworks
+	
 	artworkCollection := database.Collection("artworks")
 
 	cursor, err := artworkCollection.Find(
@@ -277,7 +276,6 @@ func GetPublicPortfolioByName(c *gin.Context) {
 		return
 	}
 
-	// 3. Public-safe response
 	c.JSON(http.StatusOK, gin.H{
 		"profile": gin.H{
 			"name": user.FullName,
@@ -287,7 +285,7 @@ func GetPublicPortfolioByName(c *gin.Context) {
 	})
 }
 func DeleteArtwork(c *gin.Context) {
-	// 1. Get artwork ID from URL param
+
 	artworkIDStr := c.Param("id")
 	if artworkIDStr == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "artwork ID is required"})
@@ -300,7 +298,6 @@ func DeleteArtwork(c *gin.Context) {
 		return
 	}
 
-	// 2. Get user ID from context
 	userIDVal, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
@@ -319,7 +316,6 @@ func DeleteArtwork(c *gin.Context) {
 		return
 	}
 
-	// 3. Find the artwork to verify ownership
 	collection := database.Collection("artworks")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -331,7 +327,6 @@ func DeleteArtwork(c *gin.Context) {
 		return
 	}
 
-	// 4. Delete from Cloudinary
 	if config.Cloudinary != nil && artwork.PublicID != "" {
 		_, err = config.Cloudinary.Upload.Destroy(context.Background(), uploader.DestroyParams{
 			PublicID: artwork.PublicID,
@@ -343,7 +338,6 @@ func DeleteArtwork(c *gin.Context) {
 		}
 	}
 
-	// 5. Delete from MongoDB
 	_, err = collection.DeleteOne(ctx, bson.M{"_id": artworkID, "userId": userID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete artwork from database"})
