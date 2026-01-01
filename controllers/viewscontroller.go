@@ -28,7 +28,7 @@ func getUserID(c *gin.Context) (primitive.ObjectID, bool) {
 	return userID, true
 }
 
-// --- Log a view (optional: associate with logged-in viewer) ---
+
 func LogView(c *gin.Context) {
 	viewCollection := database.Collection("view_events")
 	artworkCollection := database.Collection("artworks")
