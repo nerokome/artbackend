@@ -5,8 +5,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,7 +19,7 @@ import (
 )
 
 // -----------------------------
-// Helper: Generate JWT
+// Helper to generate JWT
 // -----------------------------
 func generateJWT(user models.User, duration time.Duration) (string, error) {
 	secret := os.Getenv("JWT_SECRET")
@@ -41,20 +39,6 @@ func generateJWT(user models.User, duration time.Duration) (string, error) {
 }
 
 // -----------------------------
-// Helper: Slugify
-// -----------------------------
-func slugify(input string) string {
-	s := strings.ToLower(input)
-	reg := regexp.MustCompile(`[^\w\s-]`)
-	s = reg.ReplaceAllString(s, "")
-	s = strings.ReplaceAll(s, " ", "-")
-	s = strings.ReplaceAll(s, "_", "-")
-	reg2 := regexp.MustCompile(`-+`)
-	s = reg2.ReplaceAllString(s, "-")
-	return s
-}
-
-// -----------------------------
 // SIGNUP
 // -----------------------------
 func Signup(c *gin.Context) {
@@ -62,21 +46,21 @@ func Signup(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Ensure unique index on email and slug
-	_, err := userCollection.Indexes().CreateMany(ctx, []mongo.IndexModel{
-		{Keys: bson.M{"email": 1}, Options: options.Index().SetUnique(true)},
-		{Keys: bson.M{"slug": 1}, Options: options.Index().SetUnique(true)},
+	// Optional: run once in migration instead of every signup
+	_, err := userCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.M{"email": 1},
+		Options: options.Index().SetUnique(true),
 	})
 	if err != nil {
 		log.Println("Unique index creation skipped:", err)
 	}
 
-	// Input validation
 	var input struct {
 		FullName string `json:"fullName" binding:"required"`
 		Email    string `json:"email" binding:"required,email"`
 		Password string `json:"password" binding:"required,min=6"`
 	}
+
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input: " + err.Error()})
 		return
@@ -90,16 +74,12 @@ func Signup(c *gin.Context) {
 		return
 	}
 
-	// Generate slug
-	slug := slugify(input.FullName)
-
 	user := models.User{
 		ID:        primitive.NewObjectID(),
 		FullName:  input.FullName,
 		Email:     input.Email,
 		Password:  string(hashedPassword),
 		Role:      "user",
-		Slug:      slug,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -107,7 +87,7 @@ func Signup(c *gin.Context) {
 	_, err = userCollection.InsertOne(ctx, user)
 	if err != nil {
 		if mongo.IsDuplicateKeyError(err) {
-			c.JSON(http.StatusConflict, gin.H{"error": "Email or username already exists"})
+			c.JSON(http.StatusConflict, gin.H{"error": "Email already exists"})
 		} else {
 			log.Println("Failed to insert user:", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
@@ -130,7 +110,6 @@ func Signup(c *gin.Context) {
 			"name":  user.FullName,
 			"email": user.Email,
 			"role":  user.Role,
-			"slug":  user.Slug,
 		},
 	})
 }
@@ -147,6 +126,7 @@ func Login(c *gin.Context) {
 		Email    string `json:"email" binding:"required,email"`
 		Password string `json:"password" binding:"required"`
 	}
+
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input: " + err.Error()})
 		return
@@ -163,7 +143,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	token, err := generateJWT(user, 7*24*time.Hour)
+	token, err := generateJWT(user, 7*24*time.Hour) // same duration as signup
 	if err != nil {
 		log.Println("JWT generation failed:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
@@ -177,7 +157,6 @@ func Login(c *gin.Context) {
 			"name":  user.FullName,
 			"email": user.Email,
 			"role":  user.Role,
-			"slug":  user.Slug,
 		},
 	})
 }
@@ -191,7 +170,3 @@ func Logout(c *gin.Context) {
 		"message": "Logged out successfully",
 	})
 }
-
-// -----------------------------
-// GET PUBLIC PORTFOLIO BY SLUG
-// -----------------------------

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
@@ -219,51 +220,68 @@ func GetMyArtworks(c *gin.Context) {
 		"artworks": artworks,
 	})
 }
-func GetPublicPortfolioBySlug(c *gin.Context) {
-	slug := c.Param("slug")
-	if slug == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "slug required"})
-		return
-	}
+func GetPublicPortfolioByName(c *gin.Context) {
+	nameSlug := c.Param("name")
+
+	normalizedName := strings.ReplaceAll(nameSlug, "-", " ")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	userCollection := database.Collection("users")
 	var user models.User
-	if err := userCollection.FindOne(ctx, bson.M{"slug": slug}).Decode(&user); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "artist not found"})
+
+	err := userCollection.FindOne(
+		ctx,
+		bson.M{
+			"full_name": bson.M{
+				"$regex":   "^" + normalizedName + "$",
+				"$options": "i",
+			},
+		},
+	).Decode(&user)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "artist not found",
+		})
 		return
 	}
 
 	artworkCollection := database.Collection("artworks")
+
 	cursor, err := artworkCollection.Find(
 		ctx,
-		bson.M{"userId": user.ID, "isPublic": true},
+		bson.M{
+			"userId":   user.ID,
+			"isPublic": true,
+		},
 		options.Find().SetSort(bson.M{"createdAt": -1}),
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch artworks"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to fetch artworks",
+		})
 		return
 	}
 	defer cursor.Close(ctx)
 
 	var artworks []models.Artwork
 	if err := cursor.All(ctx, &artworks); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse artworks"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to parse artworks",
+		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"profile": gin.H{
 			"name": user.FullName,
-			"slug": user.Slug,
 		},
 		"count":    len(artworks),
 		"artworks": artworks,
 	})
 }
-
 func DeleteArtwork(c *gin.Context) {
 
 	artworkIDStr := c.Param("id")
