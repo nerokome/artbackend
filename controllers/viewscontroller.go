@@ -13,6 +13,22 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+// Helper to get authenticated user ID
+func getUserID(c *gin.Context) (primitive.ObjectID, bool) {
+	userIDStr, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return primitive.NilObjectID, false
+	}
+	userID, err := primitive.ObjectIDFromHex(userIDStr.(string))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return primitive.NilObjectID, false
+	}
+	return userID, true
+}
+
+// --- Log a view (optional: associate with logged-in viewer) ---
 func LogView(c *gin.Context) {
 	viewCollection := database.Collection("view_events")
 	artworkCollection := database.Collection("artworks")
@@ -32,11 +48,19 @@ func LogView(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	var viewerID *primitive.ObjectID
+	if userIDStr, exists := c.Get("user_id"); exists {
+		if id, err := primitive.ObjectIDFromHex(userIDStr.(string)); err == nil {
+			viewerID = &id
+		}
+	}
+
 	view := bson.M{
 		"artworkId": objID,
-		"userId":    nil,
+		"userId":    viewerID, 
 		"createdAt": time.Now(),
 	}
+
 	_, err = viewCollection.InsertOne(ctx, view)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to log view event"})
@@ -49,23 +73,31 @@ func LogView(c *gin.Context) {
 		bson.M{"$inc": bson.M{"views": 1}},
 	)
 	if err != nil {
-
 		fmt.Println("Failed to increment view counter:", err)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "view logged and counter incremented"})
 }
+
+
 func GetAnalyticsOverview(c *gin.Context) {
+	userID, ok := getUserID(c)
+	if !ok {
+		return
+	}
+
 	artworkCollection := database.Collection("artworks")
 	viewCollection := database.Collection("view_events")
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	totalArtworks, _ := artworkCollection.CountDocuments(ctx, bson.M{})
-	totalViews, _ := viewCollection.CountDocuments(ctx, bson.M{})
+	totalArtworks, _ := artworkCollection.CountDocuments(ctx, bson.M{"userId": userID})
+	totalViews, _ := viewCollection.CountDocuments(ctx, bson.M{"artworkId": bson.M{"$in": artworkIDsByUser(ctx, userID)}})
 
 	cursor, err := viewCollection.Aggregate(ctx, bson.A{
+		bson.M{
+			"$match": bson.M{"artworkId": bson.M{"$in": artworkIDsByUser(ctx, userID)}},
+		},
 		bson.M{
 			"$group": bson.M{
 				"_id": bson.M{
@@ -79,7 +111,6 @@ func GetAnalyticsOverview(c *gin.Context) {
 			},
 		},
 	})
-
 	var viewerSplit []bson.M
 	if err == nil {
 		cursor.All(ctx, &viewerSplit)
@@ -92,7 +123,13 @@ func GetAnalyticsOverview(c *gin.Context) {
 	})
 }
 
+
 func GetViewsOverTime(c *gin.Context) {
+	userID, ok := getUserID(c)
+	if !ok {
+		return
+	}
+
 	viewCollection := database.Collection("view_events")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -100,7 +137,12 @@ func GetViewsOverTime(c *gin.Context) {
 	start := time.Now().AddDate(0, 0, -6)
 
 	cursor, err := viewCollection.Aggregate(ctx, bson.A{
-		bson.M{"$match": bson.M{"createdAt": bson.M{"$gte": start}}},
+		bson.M{
+			"$match": bson.M{
+				"artworkId": bson.M{"$in": artworkIDsByUser(ctx, userID)},
+				"createdAt": bson.M{"$gte": start},
+			},
+		},
 		bson.M{
 			"$group": bson.M{
 				"_id":   bson.M{"$dateToString": bson.M{"format": "%Y-%m-%d", "date": "$createdAt"}},
@@ -120,13 +162,19 @@ func GetViewsOverTime(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// --- Most viewed artworks (per-user) ---
 func GetMostViewedArtworks(c *gin.Context) {
+	userID, ok := getUserID(c)
+	if !ok {
+		return
+	}
+
 	collection := database.Collection("artworks")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	opts := options.Find().SetSort(bson.M{"views": -1})
-	cursor, err := collection.Find(ctx, bson.M{"isPublic": true}, opts)
+	cursor, err := collection.Find(ctx, bson.M{"isPublic": true, "userId": userID}, opts)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Fetch failed"})
@@ -138,13 +186,21 @@ func GetMostViewedArtworks(c *gin.Context) {
 	c.JSON(http.StatusOK, artworks)
 }
 
+// --- Engagement split (per-user) ---
 func GetEngagementSplit(c *gin.Context) {
-	viewCollection := database.Collection("view_events")
+	userID, ok := getUserID(c)
+	if !ok {
+		return
+	}
 
+	viewCollection := database.Collection("view_events")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	pipeline := bson.A{
+		bson.M{
+			"$match": bson.M{"artworkId": bson.M{"$in": artworkIDsByUser(ctx, userID)}},
+		},
 		bson.M{
 			"$group": bson.M{
 				"_id":   "$artworkId",
@@ -159,9 +215,7 @@ func GetEngagementSplit(c *gin.Context) {
 				"as":           "artwork",
 			},
 		},
-		bson.M{
-			"$unwind": "$artwork",
-		},
+		bson.M{"$unwind": "$artwork"},
 		bson.M{
 			"$project": bson.M{
 				"_id":   1,
@@ -187,4 +241,25 @@ func GetEngagementSplit(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+// --- Helper: fetch artwork IDs for a user ---
+func artworkIDsByUser(ctx context.Context, userID primitive.ObjectID) []primitive.ObjectID {
+	collection := database.Collection("artworks")
+	cursor, err := collection.Find(ctx, bson.M{"userId": userID})
+	if err != nil {
+		return []primitive.ObjectID{}
+	}
+	defer cursor.Close(ctx)
+
+	var artworks []struct {
+		ID primitive.ObjectID `bson:"_id"`
+	}
+	cursor.All(ctx, &artworks)
+
+	ids := make([]primitive.ObjectID, len(artworks))
+	for i, art := range artworks {
+		ids[i] = art.ID
+	}
+	return ids
 }
