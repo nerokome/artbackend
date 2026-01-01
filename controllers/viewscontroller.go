@@ -140,26 +140,51 @@ func GetMostViewedArtworks(c *gin.Context) {
 
 func GetEngagementSplit(c *gin.Context) {
 	viewCollection := database.Collection("view_events")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cursor, err := viewCollection.Aggregate(ctx, bson.A{
+	pipeline := bson.A{
 		bson.M{
 			"$group": bson.M{
 				"_id":   "$artworkId",
 				"views": bson.M{"$sum": 1},
 			},
 		},
+		bson.M{
+			"$lookup": bson.M{
+				"from":         "artworks",
+				"localField":   "_id",
+				"foreignField": "_id",
+				"as":           "artwork",
+			},
+		},
+		bson.M{
+			"$unwind": "$artwork",
+		},
+		bson.M{
+			"$project": bson.M{
+				"_id":   1,
+				"title": "$artwork.title",
+				"views": 1,
+			},
+		},
 		bson.M{"$sort": bson.M{"views": -1}},
 		bson.M{"$limit": 5},
-	})
+	}
 
+	cursor, err := viewCollection.Aggregate(ctx, pipeline)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Aggregation failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "aggregation failed"})
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var result []bson.M
+	if err := cursor.All(ctx, &result); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse result"})
 		return
 	}
 
-	var result []bson.M
-	cursor.All(ctx, &result)
 	c.JSON(http.StatusOK, result)
 }
