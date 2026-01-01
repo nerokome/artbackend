@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
 	"time"
@@ -13,47 +12,20 @@ import (
 	"github.com/nerokome/artfolio-backend/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// -----------------------------
-// Helper to generate JWT
-// -----------------------------
-func generateJWT(user models.User, duration time.Duration) (string, error) {
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		return "", nil
-	}
-	claims := jwt.MapClaims{
-		"userId": user.ID.Hex(),
-		"email":  user.Email,
-		"role":   user.Role,
-		"exp":    time.Now().Add(duration).Unix(),
-		"iat":    time.Now().Unix(),
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(secret))
+// helper function to respond with JSON error
+func respondError(c *gin.Context, status int, message string) {
+	c.JSON(status, gin.H{"error": message})
+	c.Abort()
 }
 
-// -----------------------------
 // SIGNUP
-// -----------------------------
 func Signup(c *gin.Context) {
 	userCollection := database.Collection("users")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	// Optional: run once in migration instead of every signup
-	_, err := userCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.M{"email": 1},
-		Options: options.Index().SetUnique(true),
-	})
-	if err != nil {
-		log.Println("Unique index creation skipped:", err)
-	}
 
 	var input struct {
 		FullName string `json:"fullName" binding:"required"`
@@ -62,15 +34,23 @@ func Signup(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input: " + err.Error()})
+		respondError(c, http.StatusBadRequest, "Invalid input: "+err.Error())
 		return
 	}
 
-	// Hash password
+	count, err := userCollection.CountDocuments(ctx, bson.M{"email": input.Email})
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "Database error: "+err.Error())
+		return
+	}
+	if count > 0 {
+		respondError(c, http.StatusConflict, "Email already exists")
+		return
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	if err != nil {
-		log.Println("Password hashing failed:", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		respondError(c, http.StatusInternalServerError, "Could not hash password")
 		return
 	}
 
@@ -84,39 +64,15 @@ func Signup(c *gin.Context) {
 		UpdatedAt: time.Now(),
 	}
 
-	_, err = userCollection.InsertOne(ctx, user)
-	if err != nil {
-		if mongo.IsDuplicateKeyError(err) {
-			c.JSON(http.StatusConflict, gin.H{"error": "Email already exists"})
-		} else {
-			log.Println("Failed to insert user:", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-		}
+	if _, err := userCollection.InsertOne(ctx, user); err != nil {
+		respondError(c, http.StatusInternalServerError, "Could not create user: "+err.Error())
 		return
 	}
 
-	token, err := generateJWT(user, 7*24*time.Hour)
-	if err != nil {
-		log.Println("JWT generation failed:", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "Signup successful",
-		"token":   token,
-		"user": gin.H{
-			"id":    user.ID.Hex(),
-			"name":  user.FullName,
-			"email": user.Email,
-			"role":  user.Role,
-		},
-	})
+	c.JSON(http.StatusCreated, gin.H{"message": "Signup successful"})
 }
 
-// -----------------------------
 // LOGIN
-// -----------------------------
 func Login(c *gin.Context) {
 	userCollection := database.Collection("users")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -128,30 +84,44 @@ func Login(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input: " + err.Error()})
+		respondError(c, http.StatusBadRequest, "Invalid input: "+err.Error())
 		return
 	}
 
 	var user models.User
 	if err := userCollection.FindOne(ctx, bson.M{"email": input.Email}).Decode(&user); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+		respondError(c, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+		respondError(c, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 
-	token, err := generateJWT(user, 7*24*time.Hour) // same duration as signup
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		respondError(c, http.StatusInternalServerError, "JWT secret not configured")
+		return
+	}
+
+	claims := jwt.MapClaims{
+		"user_id": user.ID.Hex(),
+		"email":   user.Email,
+		"role":    user.Role,
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+		"iat":     time.Now().Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signedToken, err := token.SignedString([]byte(secret))
 	if err != nil {
-		log.Println("JWT generation failed:", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		respondError(c, http.StatusInternalServerError, "Could not generate token: "+err.Error())
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"token": token,
+		"token": signedToken,
 		"user": gin.H{
 			"id":    user.ID.Hex(),
 			"name":  user.FullName,
@@ -161,11 +131,9 @@ func Login(c *gin.Context) {
 	})
 }
 
-// -----------------------------
 // LOGOUT
-// -----------------------------
 func Logout(c *gin.Context) {
-	// Stateless JWT — client just deletes token
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Logged out successfully",
 	})
