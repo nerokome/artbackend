@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,7 +15,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -46,15 +46,6 @@ func Signup(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Optional: run once in migration instead of every signup
-	_, err := userCollection.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.M{"email": 1},
-		Options: options.Index().SetUnique(true),
-	})
-	if err != nil {
-		log.Println("Unique index creation skipped:", err)
-	}
-
 	var input struct {
 		FullName string `json:"fullName" binding:"required"`
 		Email    string `json:"email" binding:"required,email"`
@@ -66,7 +57,10 @@ func Signup(c *gin.Context) {
 		return
 	}
 
-	// Hash password
+	// FIX: Clean the input to prevent "Phone vs Laptop" mismatches
+	cleanEmail := strings.ToLower(strings.TrimSpace(input.Email))
+	cleanName := strings.TrimSpace(input.FullName)
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Println("Password hashing failed:", err)
@@ -76,8 +70,8 @@ func Signup(c *gin.Context) {
 
 	user := models.User{
 		ID:        primitive.NewObjectID(),
-		FullName:  input.FullName,
-		Email:     input.Email,
+		FullName:  cleanName,
+		Email:     cleanEmail,
 		Password:  string(hashedPassword),
 		Role:      "user",
 		CreatedAt: time.Now(),
@@ -97,7 +91,6 @@ func Signup(c *gin.Context) {
 
 	token, err := generateJWT(user, 7*24*time.Hour)
 	if err != nil {
-		log.Println("JWT generation failed:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
@@ -109,7 +102,6 @@ func Signup(c *gin.Context) {
 			"id":    user.ID.Hex(),
 			"name":  user.FullName,
 			"email": user.Email,
-			"role":  user.Role,
 		},
 	})
 }
@@ -132,8 +124,11 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// FIX: Clean email during login so it matches the clean signup data
+	cleanEmail := strings.ToLower(strings.TrimSpace(input.Email))
+
 	var user models.User
-	if err := userCollection.FindOne(ctx, bson.M{"email": input.Email}).Decode(&user); err != nil {
+	if err := userCollection.FindOne(ctx, bson.M{"email": cleanEmail}).Decode(&user); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
@@ -143,9 +138,8 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	token, err := generateJWT(user, 7*24*time.Hour) // same duration as signup
+	token, err := generateJWT(user, 7*24*time.Hour)
 	if err != nil {
-		log.Println("JWT generation failed:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
@@ -156,17 +150,10 @@ func Login(c *gin.Context) {
 			"id":    user.ID.Hex(),
 			"name":  user.FullName,
 			"email": user.Email,
-			"role":  user.Role,
 		},
 	})
 }
 
-// -----------------------------
-// LOGOUT
-// -----------------------------
 func Logout(c *gin.Context) {
-	// Stateless JWT — client just deletes token
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Logged out successfully",
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }

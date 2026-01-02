@@ -223,7 +223,10 @@ func GetMyArtworks(c *gin.Context) {
 func GetPublicPortfolioByName(c *gin.Context) {
 	nameSlug := c.Param("name")
 
+	// FIX: Trim spaces and clean the slug from the URL
+	nameSlug = strings.TrimSpace(nameSlug)
 	normalizedName := strings.ReplaceAll(nameSlug, "-", " ")
+	searchName := strings.TrimSpace(normalizedName)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -231,25 +234,24 @@ func GetPublicPortfolioByName(c *gin.Context) {
 	userCollection := database.Collection("users")
 	var user models.User
 
+	// Regex search with case-insensitivity ("i")
+	// Anchor tags ^ and $ now work because we TrimSpace'd the searchName
 	err := userCollection.FindOne(
 		ctx,
 		bson.M{
 			"full_name": bson.M{
-				"$regex":   "^" + normalizedName + "$",
+				"$regex":   "^" + searchName + "$",
 				"$options": "i",
 			},
 		},
 	).Decode(&user)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "artist not found",
-		})
+		c.JSON(http.StatusNotFound, gin.H{"error": "artist not found"})
 		return
 	}
 
 	artworkCollection := database.Collection("artworks")
-
 	cursor, err := artworkCollection.Find(
 		ctx,
 		bson.M{
@@ -259,25 +261,19 @@ func GetPublicPortfolioByName(c *gin.Context) {
 		options.Find().SetSort(bson.M{"createdAt": -1}),
 	)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed to fetch artworks",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch artworks"})
 		return
 	}
 	defer cursor.Close(ctx)
 
 	var artworks []models.Artwork
 	if err := cursor.All(ctx, &artworks); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "failed to parse artworks",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse artworks"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"profile": gin.H{
-			"name": user.FullName,
-		},
+		"profile":  gin.H{"name": user.FullName},
 		"count":    len(artworks),
 		"artworks": artworks,
 	})
