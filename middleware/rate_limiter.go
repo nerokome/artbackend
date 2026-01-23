@@ -20,11 +20,8 @@ var (
 	mu      sync.Mutex
 )
 
-// RateLimiter creates a per-IP rate limiter middleware.
-// rateLimit = requests per second
-// burst = max burst allowed
+
 func RateLimiter(rateLimit rate.Limit, burst int) gin.HandlerFunc {
-	// Start cleanup goroutine once
 	go cleanupClients()
 
 	return func(c *gin.Context) {
@@ -53,11 +50,11 @@ func RateLimiter(rateLimit rate.Limit, burst int) gin.HandlerFunc {
 	}
 }
 
-// getClientIP checks X-Forwarded-For header first, then falls back to ClientIP
+/
 func getClientIP(c *gin.Context) string {
 	ip := c.GetHeader("X-Forwarded-For")
 	if ip != "" {
-		// If multiple IPs in header, take the first one
+		
 		ip = strings.Split(ip, ",")[0]
 		ip = strings.TrimSpace(ip)
 	}

@@ -10,30 +10,30 @@ func ArtworkRoutes(router *gin.Engine) {
 
 	artworks := router.Group("/artworks")
 
-	// 🔒 Upload: expensive + sensitive
+	
 	artworks.POST(
 		"/upload",
 		middleware.Authenticate(),
-		middleware.RateLimiter(0.2, 1), // 1 upload every ~5s
+		middleware.RateLimiter(0.2, 1), 
 		middleware.UploadMiddleware(10, []string{"image/"}),
 		controllers.UploadArtwork,
 	)
 
-	// 🌍 Public list (light limit)
+	
 	artworks.GET(
 		"/public",
 		middleware.RateLimiter(2, 5),
 		controllers.GetPublicArtworks,
 	)
 
-	// 👁️ View + analytics (VERY IMPORTANT)
+	
 	artworks.GET(
 		"/:id",
 		middleware.RateLimiter(1, 5),
 		controllers.GetArtworkAndCountView,
 	)
 
-	// 👤 User’s own artworks
+	
 	artworks.GET(
 		"/mine",
 		middleware.Authenticate(),
@@ -41,11 +41,10 @@ func ArtworkRoutes(router *gin.Engine) {
 		controllers.GetMyArtworks,
 	)
 
-	// 🗑️ Delete artwork (destructive)
 	artworks.DELETE(
 		"/:id",
 		middleware.Authenticate(),
-		middleware.RateLimiter(0.3, 1), // slow, deliberate deletes
+		middleware.RateLimiter(0.3, 1), 
 		controllers.DeleteArtwork,
 	)
 }
