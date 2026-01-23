@@ -20,7 +20,6 @@ var (
 	mu      sync.Mutex
 )
 
-
 func RateLimiter(rateLimit rate.Limit, burst int) gin.HandlerFunc {
 	go cleanupClients()
 
@@ -50,11 +49,9 @@ func RateLimiter(rateLimit rate.Limit, burst int) gin.HandlerFunc {
 	}
 }
 
-/
 func getClientIP(c *gin.Context) string {
 	ip := c.GetHeader("X-Forwarded-For")
 	if ip != "" {
-		
 		ip = strings.Split(ip, ",")[0]
 		ip = strings.TrimSpace(ip)
 	}
@@ -63,7 +60,6 @@ func getClientIP(c *gin.Context) string {
 	}
 	return ip
 }
-
 
 func cleanupClients() {
 	for {
