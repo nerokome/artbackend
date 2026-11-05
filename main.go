@@ -36,6 +36,7 @@ func main() {
 			"Origin",
 			"Content-Type",
 			"Authorization",
+			"X-Visitor-ID",
 		},
 		ExposeHeaders: []string{
 			"Content-Length",
@@ -49,9 +50,11 @@ func main() {
 	})
 
 	routes.AuthRoutes(r)
+	routes.ProfileRoutes(r)
 	routes.ArtworkRoutes(r)
 	routes.AnalyticsRoutes(r)
 	routes.PublicPortfolioRoutes(r)
+	routes.SocialRoutes(r)
 
 	if err := r.Run(":5005"); err != nil {
 		log.Fatal("Server failed to start:", err)

@@ -222,6 +222,12 @@ func GetMyArtworks(c *gin.Context) {
 }
 func GetPublicPortfolioByName(c *gin.Context) {
 	nameSlug := c.Param("name")
+	// Also support clients that pass an artist ID directly as /portfolio/{id}.
+	if _, err := primitive.ObjectIDFromHex(nameSlug); err == nil {
+		c.Params = append(c.Params, gin.Param{Key: "id", Value: nameSlug})
+		GetPublicPortfolioByID(c)
+		return
+	}
 
 	// FIX: Trim spaces and clean the slug from the URL
 	nameSlug = strings.TrimSpace(nameSlug)
@@ -278,6 +284,106 @@ func GetPublicPortfolioByName(c *gin.Context) {
 		"artworks": artworks,
 	})
 }
+
+// GetPublicArtists returns only artists with at least one public artwork. The
+// response deliberately omits account details such as email addresses.
+func GetPublicArtists(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+
+	pipeline := bson.A{
+		bson.M{"$lookup": bson.M{
+			"from": "artworks", "let": bson.M{"artistId": "$_id"},
+			"pipeline": bson.A{
+				bson.M{"$match": bson.M{"$expr": bson.M{"$and": bson.A{
+					bson.M{"$eq": bson.A{"$userId", "$$artistId"}}, bson.M{"$eq": bson.A{"$isPublic", true}},
+				}}}},
+				bson.M{"$count": "count"},
+			}, "as": "publicArtworks",
+		}},
+		bson.M{"$match": bson.M{"publicArtworks.0": bson.M{"$exists": true}}},
+		bson.M{"$lookup": bson.M{"from": "profiles", "localField": "_id", "foreignField": "_id", "as": "profile"}},
+		bson.M{"$unwind": bson.M{"path": "$profile", "preserveNullAndEmptyArrays": true}},
+		bson.M{"$lookup": bson.M{
+			"from": "follows", "let": bson.M{"artistId": "$_id"},
+			"pipeline": bson.A{
+				bson.M{"$match": bson.M{"$expr": bson.M{"$eq": bson.A{"$artistId", "$$artistId"}}}},
+				bson.M{"$count": "count"},
+			}, "as": "followerStats",
+		}},
+		bson.M{"$lookup": bson.M{
+			"from": "follows", "let": bson.M{"artistId": "$_id"},
+			"pipeline": bson.A{
+				bson.M{"$match": bson.M{"$expr": bson.M{"$eq": bson.A{"$followerId", "$$artistId"}}}},
+				bson.M{"$count": "count"},
+			}, "as": "followingStats",
+		}},
+		bson.M{"$project": bson.M{
+			"_id": 1, "id": "$_id",
+			"name":              bson.M{"$ifNull": bson.A{"$profile.name", "$full_name"}},
+			"profilePictureUrl": bson.M{"$ifNull": bson.A{"$profile.profilePictureUrl", ""}},
+			"artworkCount":      bson.M{"$arrayElemAt": bson.A{"$publicArtworks.count", 0}},
+			"followerCount":     bson.M{"$ifNull": bson.A{bson.M{"$arrayElemAt": bson.A{"$followerStats.count", 0}}, 0}},
+			"followingCount":    bson.M{"$ifNull": bson.A{bson.M{"$arrayElemAt": bson.A{"$followingStats.count", 0}}, 0}},
+		}},
+		bson.M{"$sort": bson.M{"name": 1}},
+	}
+
+	cursor, err := database.Collection("users").Aggregate(ctx, pipeline)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch artists"})
+		return
+	}
+	defer cursor.Close(ctx)
+	var artists []bson.M
+	if err := cursor.All(ctx, &artists); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse artists"})
+		return
+	}
+	if artists == nil {
+		artists = []bson.M{}
+	}
+	c.JSON(http.StatusOK, gin.H{"count": len(artists), "artists": artists})
+}
+
+// GetPublicPortfolioByID gives artist cards a stable URL even when names
+// change or are shared by multiple artists.
+func GetPublicPortfolioByID(c *gin.Context) {
+	userID, err := primitive.ObjectIDFromHex(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid artist id"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	var user models.User
+	if err := database.Collection("users").FindOne(ctx, bson.M{"_id": userID}).Decode(&user); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "artist not found"})
+		return
+	}
+	var profile models.Profile
+	_ = database.Collection("profiles").FindOne(ctx, bson.M{"_id": userID}).Decode(&profile)
+	cursor, err := database.Collection("artworks").Find(ctx, bson.M{"userId": userID, "isPublic": true}, options.Find().SetSort(bson.M{"createdAt": -1}))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch artworks"})
+		return
+	}
+	defer cursor.Close(ctx)
+	var artworks []models.Artwork
+	if err := cursor.All(ctx, &artworks); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse artworks"})
+		return
+	}
+	if artworks == nil {
+		artworks = []models.Artwork{}
+	}
+	name := profile.Name
+	if name == "" {
+		name = user.FullName
+	}
+	c.JSON(http.StatusOK, gin.H{"profile": gin.H{"id": user.ID.Hex(), "name": name, "profilePictureUrl": profile.ProfilePictureURL}, "count": len(artworks), "artworks": artworks})
+}
+
 func DeleteArtwork(c *gin.Context) {
 
 	artworkIDStr := c.Param("id")

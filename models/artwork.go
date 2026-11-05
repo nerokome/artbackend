@@ -14,6 +14,7 @@ type Artwork struct {
 	URL       string             `bson:"url" json:"url"`
 	PublicID  string             `bson:"publicId" json:"publicId"`
 	Views     int                `bson:"views" json:"views"`
+	Likes     int                `bson:"likes" json:"likes"`
 	IsPublic  bool               `bson:"isPublic" json:"isPublic"`
 	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
 }

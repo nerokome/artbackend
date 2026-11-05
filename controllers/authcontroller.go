@@ -51,7 +51,6 @@ func Signup(c *gin.Context) {
 		return
 	}
 
-	
 	cleanEmail := strings.ToLower(strings.TrimSpace(input.Email))
 	cleanName := strings.TrimSpace(input.FullName)
 
@@ -81,6 +80,15 @@ func Signup(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		}
 		return
+	}
+
+	profile := models.Profile{
+		ID: user.ID, UserID: user.ID, Name: user.FullName,
+		CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt,
+	}
+	if _, err := database.Collection("profiles").InsertOne(ctx, profile); err != nil {
+		// The profile endpoint can create it on demand if this insert fails.
+		log.Println("Failed to create user profile:", err)
 	}
 
 	token, err := generateJWT(user, 7*24*time.Hour)
