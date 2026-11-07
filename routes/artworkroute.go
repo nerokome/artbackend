@@ -25,6 +25,12 @@ func ArtworkRoutes(router *gin.Engine) {
 	)
 
 	artworks.GET(
+		"/popular",
+		middleware.RateLimiter(2, 5),
+		controllers.GetPopularArtworks,
+	)
+
+	artworks.GET(
 		"/:id",
 		middleware.RateLimiter(1, 5),
 		controllers.GetArtworkAndCountView,

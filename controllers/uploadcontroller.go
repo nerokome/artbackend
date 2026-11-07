@@ -125,6 +125,40 @@ func GetPublicArtworks(c *gin.Context) {
 	c.JSON(http.StatusOK, artworks)
 }
 
+// GetPopularArtworks returns the 10 public artworks with the highest combined
+// view and like counts.
+func GetPopularArtworks(c *gin.Context) {
+	collection := database.Collection("artworks")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cursor, err := collection.Aggregate(ctx, bson.A{
+		bson.M{"$match": bson.M{"isPublic": true}},
+		bson.M{"$addFields": bson.M{
+			"views": bson.M{"$ifNull": bson.A{"$views", 0}},
+			"likes": bson.M{"$ifNull": bson.A{"$likes", 0}},
+		}},
+		bson.M{"$addFields": bson.M{"popularityScore": bson.M{"$add": bson.A{"$views", "$likes"}}}},
+		bson.M{"$sort": bson.M{"popularityScore": -1, "createdAt": -1}},
+		bson.M{"$limit": 10},
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch popular artworks"})
+		return
+	}
+	defer cursor.Close(ctx)
+
+	var artworks []bson.M
+	if err := cursor.All(ctx, &artworks); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse popular artworks"})
+		return
+	}
+	if artworks == nil {
+		artworks = []bson.M{}
+	}
+	c.JSON(http.StatusOK, artworks)
+}
+
 func GetArtworkAndCountView(c *gin.Context) {
 	id := c.Param("id")
 

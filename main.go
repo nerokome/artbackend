@@ -51,6 +51,7 @@ func main() {
 
 	routes.AuthRoutes(r)
 	routes.ProfileRoutes(r)
+	routes.SettingsRoutes(r)
 	routes.ArtworkRoutes(r)
 	routes.AnalyticsRoutes(r)
 	routes.PublicPortfolioRoutes(r)
