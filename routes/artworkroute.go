@@ -44,9 +44,9 @@ func ArtworkRoutes(router *gin.Engine) {
 	)
 
 	likes := artworks.Group("/:id/like")
-	likes.GET("", middleware.RateLimiter(2, 5), controllers.GetArtworkLikeStatus)
-	likes.POST("", middleware.RateLimiter(1, 5), controllers.LikeArtwork)
-	likes.DELETE("", middleware.RateLimiter(1, 5), controllers.UnlikeArtwork)
+	likes.GET("", middleware.RateLimiter(10, 30), controllers.GetArtworkLikeStatus)
+	likes.POST("", middleware.RateLimiter(2, 10), controllers.LikeArtwork)
+	likes.DELETE("", middleware.RateLimiter(2, 10), controllers.UnlikeArtwork)
 
 	artworks.DELETE(
 		"/:id",
